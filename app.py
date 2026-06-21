@@ -1,11 +1,11 @@
 import os
 import sys
 import numpy as np
-import sqlite3
 import io
 import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file
+from supabase import create_client
 
 # إعدادات إشعارات WhatsApp (CallMeBot API) - يتم جلبها من بيئة النظام لدعم النشر الآمن والإنتاجي
 WHATSAPP_PHONE = os.getenv("NEUROSHIELD_WHATSAPP_PHONE", "+1234567890")  # رقم الهاتف الخاص بـ WhatsApp مع رمز الدولة
@@ -30,45 +30,43 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 ai_engine_path = os.path.join(base_dir, 'ai_engine')
 sys.path.append(ai_engine_path)
 
-# تهيئة قاعدة البيانات المحلية لحفظ التنبيهات والأحداث الأمنية
-DATABASE_FILE = os.path.join(base_dir, 'neuroshield_soc.db')
+# إعدادات الاتصال بقاعدة بيانات Supabase السحابية (PostgreSQL)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+
+# تهيئة عميل Supabase
+supabase = None
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        print("✅ تم تهيئة عميل Supabase بنجاح.")
+    except Exception as e:
+        print(f"❌ فشل تهيئة عميل Supabase: {e}")
+else:
+    print("⚠️ تحذير: لم يتم العثور على SUPABASE_URL أو SUPABASE_SERVICE_KEY في متغيرات البيئة.")
 
 def init_db():
-    try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                process_name TEXT NOT NULL,
-                pid INTEGER NOT NULL,
-                risk_factor REAL NOT NULL,
-                action_taken TEXT NOT NULL,
-                status TEXT NOT NULL
-            )
-        ''')
-        conn.commit()
-        conn.close()
-        print("💾 قاعدة بيانات SQLite جاهزة والموديل متصل بها.")
-    except Exception as e:
-        print(f"❌ فشل تهيئة قاعدة البيانات: {e}")
+    print("☁️ تم الانتقال بالكامل لقاعدة بيانات Supabase السحابية (PostgreSQL).")
 
 init_db()
 
 def insert_alert(process_name, pid, risk_factor, action_taken, status):
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
         timestamp = datetime.now().isoformat()
-        cursor.execute('''
-            INSERT INTO alerts (timestamp, process_name, pid, risk_factor, action_taken, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (timestamp, process_name, pid, risk_factor, action_taken, status))
-        conn.commit()
-        conn.close()
+        if supabase:
+            supabase.table('neuroshield_alerts').insert({
+                "timestamp": timestamp,
+                "process_name": process_name,
+                "pid": pid,
+                "risk_factor": risk_factor,
+                "action_taken": action_taken,
+                "status": status
+            }).execute()
+            print("🚀 تم تسجيل التنبيه في Supabase بنجاح (NeuroShield).")
+        else:
+            print("❌ لم يتم تهيئة عميل Supabase لإدراج التنبيه.")
     except Exception as e:
-        print(f"❌ فشل كتابة التنبيه في قاعدة البيانات: {e}")
+        print(f"❌ فشل كتابة التنبيه في قاعدة بيانات Supabase (NeuroShield): {e}")
 
 def send_webhook_alert(process_name, pid, risk_factor, action, hostname):
     """
@@ -126,13 +124,25 @@ load_error = "Model loading disabled on cloud SIEM Gateway"
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """
-    نقطة فحص الحالة للتأكد من أن السيرفر يعمل.
+    نقطة فحص الحالة للتأكد من أن السيرفر يعمل والاتصال بـ Supabase مستقر وممتاز.
     """
+    db_status = "uninitialized"
+    if supabase:
+        try:
+            # فحص سريع للاتصال بجدول neuroshield_alerts
+            supabase.table('neuroshield_alerts').select('id', count='exact').limit(1).execute()
+            db_status = "stable"
+        except Exception as e:
+            db_status = f"error: {str(e)}"
+    else:
+        db_status = "missing_credentials"
+
     return jsonify({
         "status": "ONLINE",
         "model_loaded": False,
         "framework": "Lightweight Gateway",
-        "error": None
+        "supabase_connection": db_status,
+        "error": None if db_status == "stable" else f"Supabase connection issue: {db_status}"
     }), 200
 
 @app.route('/api/analyze', methods=['POST'])
@@ -215,27 +225,14 @@ def analyze_sequence():
 @app.route('/api/alerts', methods=['GET'])
 def get_alerts():
     """
-    نقطة استرجاع كافة التنبيهات المسجلة في قاعدة البيانات مرتبة تنازلياً حسب الوقت.
+    نقطة استرجاع كافة التنبيهات المسجلة في قاعدة البيانات مرتبة تنازلياً حسب الوقت من Supabase.
     """
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM alerts ORDER BY timestamp DESC')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        alerts_list = []
-        for r in rows:
-            alerts_list.append({
-                "id": r["id"],
-                "timestamp": r["timestamp"],
-                "process_name": r["process_name"],
-                "pid": r["pid"],
-                "risk_factor": r["risk_factor"],
-                "action_taken": r["action_taken"],
-                "status": r["status"]
-            })
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase client not initialized"}), 500
+            
+        res = supabase.table('neuroshield_alerts').select('*').order('timestamp', desc=True).execute()
+        alerts_list = res.data
             
         return jsonify({
             "success": True,
@@ -245,43 +242,41 @@ def get_alerts():
     except Exception as e:
         return jsonify({
             "success": False,
-            "error": f"فشل استرجاع البيانات من قاعدة البيانات: {str(e)}"
+            "error": f"فشل استرجاع البيانات من قاعدة البيانات السحابية Supabase: {str(e)}"
         }), 500
 
 @app.route('/api/alerts/clear', methods=['POST'])
 def clear_alerts():
     """
-    نقطة مسح كافة التنبيهات من قاعدة البيانات لتهيئة الاختبار.
+    نقطة مسح كافة التنبيهات من قاعدة البيانات السحابية Supabase لتهيئة الاختبار.
     """
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM alerts')
-        conn.commit()
-        conn.close()
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase client not initialized"}), 500
+            
+        supabase.table('neuroshield_alerts').delete().neq('id', 0).execute()
         return jsonify({
             "success": True,
-            "message": "تم مسح سجل التنبيهات بالكامل بنجاح."
+            "message": "تم مسح سجل التنبيهات بالكامل من Supabase بنجاح."
         }), 200
     except Exception as e:
         return jsonify({
             "success": False,
-            "error": f"فشل مسح قاعدة البيانات: {str(e)}"
+            "error": f"فشل مسح قاعدة البيانات السحابية Supabase: {str(e)}"
         }), 500
 
 @app.route('/api/reports/pdf', methods=['GET'])
 def generate_pdf_report():
     """
-    إنشاء تقرير PDF أمني رسمي يحتوي على إحصائيات التنبيهات وسجل العمليات.
+    إنشاء تقرير PDF أمني رسمي يحتوي على إحصائيات التنبيهات وسجل العمليات من بيانات Supabase.
     """
     try:
-        # 1. جلب البيانات من SQLite مرتبة تنازلياً
-        conn = sqlite3.connect(DATABASE_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM alerts ORDER BY timestamp DESC')
-        rows = cursor.fetchall()
-        conn.close()
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase client not initialized"}), 500
+            
+        # 1. جلب البيانات من Supabase مرتبة تنازلياً
+        res = supabase.table('neuroshield_alerts').select('*').order('timestamp', desc=True).execute()
+        rows = res.data
         
         # 2. حساب المؤشرات الأمنية التنفيذية
         total_scanned = len(rows)

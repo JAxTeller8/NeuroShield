@@ -1,8 +1,8 @@
-flask==3.0.3
-flask-cors==4.0.0
-requests==2.3.25
+flask
+flask-cors
+requests
 numpy
-reportlab==4.1.0
-psutil==5.9.8
-supabase==2.4.0
-python-dotenv==1.0.1
+reportlab
+psutil
+supabase
+python-dotenv

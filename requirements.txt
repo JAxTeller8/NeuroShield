@@ -6,3 +6,4 @@ reportlab
 psutil
 supabase
 python-dotenv
+gunicorn

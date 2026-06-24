@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = "https://irtopfmptbwhrbkmezuw.supabase.co";
+const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlydG9wZm1wdGJ3aHJia21lenV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNDk4NDEsImV4cCI6MjA5NzYyNTg0MX0.WpXrSO9-UZlZlqO1tkTm65_ZAusLwx4TZZslZrxiX8k";
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+
+const BACKEND_URL = "https://neuroshield-sx07.onrender.com";
 
 // ========================================================
 // NEUROSHIELD CYBER SOC DASHBOARD - TSX / REACT COMPONENT
@@ -72,29 +80,42 @@ export default function Dashboard() {
   // ----------------------------------------------------
   const fetchAlerts = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/alerts');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.alerts) {
-          setAlerts(data.alerts);
-        }
+      const { data, error } = await supabase
+        .from('neuroshield_alerts')
+        .select('*')
+        .order('timestamp', { ascending: false });
+
+      if (error) throw error;
+      if (data) {
+        setAlerts(data);
       }
     } catch (err) {
-      console.error("Error fetching alerts from backend:", err);
+      console.error("Error fetching alerts from Supabase:", err);
     }
   };
 
   async function checkBackend() {
     setBackendStatus('checking');
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/status');
-      if (response.ok) {
-        setBackendStatus('online');
-      } else {
+      const { error } = await supabase
+        .from('neuroshield_alerts')
+        .select('id')
+        .limit(1);
+
+      if (error) throw error;
+      setBackendStatus('online');
+    } catch {
+      // Fallback: Check Render backend status if Supabase client check fails
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/status`);
+        if (response.ok) {
+          setBackendStatus('online');
+        } else {
+          setBackendStatus('offline');
+        }
+      } catch {
         setBackendStatus('offline');
       }
-    } catch {
-      setBackendStatus('offline');
     }
   }
 
@@ -173,19 +194,27 @@ export default function Dashboard() {
   async function handleClearDatabase() {
     addLog(`[🔄] Requesting Central Database Flush...`, 'info');
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/alerts/clear', {
+      const response = await fetch(`${BACKEND_URL}/api/alerts/clear`, {
         method: 'POST',
       });
       if (response.ok) {
         addLog(`[✓] Central Database cleared successfully.`, 'success');
         setAlerts([]);
         setLogs([]);
-      } else {
-        addLog(`[-] Database clear failed: Status ${response.status}`, 'warning');
+        return;
       }
     } catch (err) {
-      addLog(`[-] API unreachable. Clearing local logs only...`, 'warning');
+      console.warn("Backend clear failed, falling back to direct Supabase clear:", err);
+    }
+
+    try {
+      const { error } = await supabase.from('neuroshield_alerts').delete().neq('id', 0);
+      if (error) throw error;
+      addLog(`[✓] Supabase database cleared directly.`, 'success');
+      setAlerts([]);
       setLogs([]);
+    } catch (err) {
+      addLog(`[-] Database clear failed: ${err.message}`, 'warning');
     }
   }
 
@@ -198,7 +227,7 @@ export default function Dashboard() {
 
     const isMaliciousKeyword = anyKeywordMatch(scanProcessName, ["ransom", "crypt", "lock", "malware", "virus"]);
     const mockPid = Math.floor(Math.random() * 19000) + 1000;
-    
+
     // Seed sequence containing tokens (realistic integers from dataset capped under 266)
     let mockSequence: number[] = [];
     if (isMaliciousKeyword) {
@@ -210,10 +239,10 @@ export default function Dashboard() {
     addLog(`[🔄] Manual Analysis Request: ${scanProcessName}...`, 'info');
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/analyze', {
+      const response = await fetch(`${BACKEND_URL}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           sequence: mockSequence,
           process_name: scanProcessName,
           pid: mockPid
@@ -223,7 +252,7 @@ export default function Dashboard() {
       if (response.ok) {
         const result: ScanResponse = await response.json();
         setScanResult(result);
-        
+
         if (result.malicious) {
           addLog(`[🚨] Threat alert trigger from API for ${scanProcessName} (Confidence: ${result.risk_percentage}%)`, 'critical');
         } else {
@@ -267,7 +296,8 @@ export default function Dashboard() {
   return (
     <div className="neuroshield-dashboard">
       {/* Native Injected Vanilla CSS Stylesheet */}
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         :root {
           --bg-primary: #07080b;
           --bg-secondary: #0e1116;
@@ -673,11 +703,11 @@ export default function Dashboard() {
       <header className="soc-header">
         <div className="header-logo">
           <svg className="shield-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>
           <h1>Neuro<span>Shield</span></h1>
         </div>
-        
+
         <div className="header-controls">
           <div className="status-badge" onClick={checkBackend} title="Click to refresh connection">
             <span className={`status-dot ${backendStatus}`}></span>
@@ -725,13 +755,13 @@ export default function Dashboard() {
 
       {/* WORKSPACE NAVIGATION TABS */}
       <div className="tab-navigation">
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'monitoring' ? 'active' : ''}`}
           onClick={() => setActiveTab('monitoring')}
         >
           Live Telemetry Log Stream
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'simulator' ? 'active' : ''}`}
           onClick={() => setActiveTab('simulator')}
         >
@@ -749,16 +779,16 @@ export default function Dashboard() {
               LIVE PROCESS TELEMETRY MONITORS (AUTO-SCROLL ON)
             </div>
             <div className="terminal-actions">
-              <button 
-                className="terminal-btn" 
-                onClick={() => window.open('http://127.0.0.1:5000/api/reports/pdf', '_blank')}
+              <button
+                className="terminal-btn"
+                onClick={() => window.open(`${BACKEND_URL}/api/reports/pdf`, '_blank')}
                 style={{ color: 'var(--color-cyan)', fontWeight: 'bold', borderColor: 'var(--color-cyan)' }}
               >
                 📥 Export PDF Report
               </button>
               <button className="terminal-btn" onClick={handleClearDatabase}>Clear Terminal</button>
-              <button 
-                className="terminal-btn" 
+              <button
+                className="terminal-btn"
                 onClick={() => setActiveFeed(!activeFeed)}
                 style={{ color: activeFeed ? '#ff3355' : '#00d2ff' }}
               >
@@ -784,12 +814,12 @@ export default function Dashboard() {
           {/* Quick Simulation Trigger */}
           <div className="sidebar-card">
             <div className="panel-heading">Manual Attack Simulator</div>
-            
+
             <div className="form-group">
               <label>Simulated Executable Name</label>
-              <input 
-                type="text" 
-                className="text-input" 
+              <input
+                type="text"
+                className="text-input"
                 value={scanProcessName}
                 onChange={(e) => setScanProcessName(e.target.value)}
                 placeholder="e.g. cryptolocker.exe"
@@ -798,8 +828,8 @@ export default function Dashboard() {
 
             <div className="form-group">
               <label>Threat Behavior Selection</label>
-              <select 
-                className="text-input" 
+              <select
+                className="text-input"
                 style={{ backgroundColor: 'var(--bg-primary)' }}
                 onChange={(e) => setScanProcessName(e.target.value)}
                 value={scanProcessName}
@@ -811,7 +841,7 @@ export default function Dashboard() {
               </select>
             </div>
 
-            <button 
+            <button
               className="scan-trigger-btn"
               disabled={isScanning}
               onClick={handleSimulateScan}
@@ -825,24 +855,24 @@ export default function Dashboard() {
                 <div className="panel-heading" style={{ fontSize: '11px', border: 'none', margin: '0 0 10px 0', padding: 0 }}>
                   Scanner API Evaluation
                 </div>
-                
+
                 <div className="result-row">
                   <span className="result-lbl">Process Name:</span>
                   <span className="result-val">{scanProcessName}</span>
                 </div>
-                
+
                 <div className="result-row">
                   <span className="result-lbl">Verdict / Assessment:</span>
                   <span className={`result-val ${scanResult.malicious ? 'threat-flag-red' : 'threat-flag-green'}`}>
                     {scanResult.malicious ? '🔴 MALICIOUS' : '🟢 SAFE'}
                   </span>
                 </div>
-                
+
                 <div className="result-row">
                   <span className="result-lbl">Transformer Confidence:</span>
                   <span className="result-val">{scanResult.risk_percentage}%</span>
                 </div>
-                
+
                 <div className="result-row">
                   <span className="result-lbl">Threat Severity Level:</span>
                   <span className="result-val" style={{ color: scanResult.malicious ? 'var(--color-ruby)' : 'var(--color-emerald)' }}>

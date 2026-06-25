@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { AdvancedThreatSimulator, AttackConfig } from './AdvancedThreatSimulator';
 
 const supabaseUrl = "https://irtopfmptbwhrbkmezuw.supabase.co";
 const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlydG9wZm1wdGJ3aHJia21lenV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIwNDk4NDEsImV4cCI6MjA5NzYyNTg0MX0.WpXrSO9-UZlZlqO1tkTm65_ZAusLwx4TZZslZrxiX8k";
@@ -221,22 +222,33 @@ export default function Dashboard() {
   // ----------------------------------------------------
   // Run Interactive Scanner / Analyze Trigger
   // ----------------------------------------------------
-  async function handleSimulateScan() {
+  async function handleSimulateScan(config: AttackConfig) {
     setIsScanning(true);
     setScanResult(null);
+    setScanProcessName(config.executableName);
 
-    const isMaliciousKeyword = anyKeywordMatch(scanProcessName, ["ransom", "crypt", "lock", "malware", "virus"]);
+    const isMalicious = !config.threatType.toLowerCase().includes('safe');
     const mockPid = Math.floor(Math.random() * 19000) + 1000;
 
     // Seed sequence containing tokens (realistic integers from dataset capped under 266)
     let mockSequence: number[] = [];
-    if (isMaliciousKeyword) {
+    if (isMalicious) {
       mockSequence = Array.from({ length: 100 }, (_, i) => (i % 5 === 0 ? 112 : i % 7 === 0 ? 260 : 158));
     } else {
       mockSequence = Array.from({ length: 100 }, () => Math.floor(Math.random() * 260) + 1);
     }
 
-    addLog(`[🔄] Manual Analysis Request: ${scanProcessName}...`, 'info');
+    addLog(`[🔄] Manual Attack Simulation: Injected '${config.executableName}' with '${config.threatType}' (${config.attackSpeed} speed)...`, 'info');
+
+    if (config.policies.networkIsolation) {
+      addLog(`[🛡️] AI policy active: Automated Network Isolation is armed`, 'system');
+    }
+    if (config.policies.killProcessTree) {
+      addLog(`[🛡️] AI policy active: Kill Process Tree is armed`, 'system');
+    }
+    if (config.policies.autoRollback) {
+      addLog(`[🛡️] AI policy active: VSS Auto Rollback is armed`, 'system');
+    }
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/analyze`, {
@@ -244,8 +256,12 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sequence: mockSequence,
-          process_name: scanProcessName,
-          pid: mockPid
+          process_name: config.executableName,
+          pid: mockPid,
+          malicious: isMalicious,
+          risk_percentage: isMalicious ? 98.48 : 2.15,
+          status: isMalicious ? 'Threat Detected' : 'Healthy',
+          action_taken: isMalicious && config.policies.killProcessTree ? 'Terminated' : 'Allowed'
         })
       });
 
@@ -254,9 +270,15 @@ export default function Dashboard() {
         setScanResult(result);
 
         if (result.malicious) {
-          addLog(`[🚨] Threat alert trigger from API for ${scanProcessName} (Confidence: ${result.risk_percentage}%)`, 'critical');
+          addLog(`[🚨] Threat alert trigger from API for ${config.executableName} (Confidence: ${result.risk_percentage}%)`, 'critical');
+          if (config.policies.killProcessTree) {
+            addLog(`[❌] Process ${mockPid} terminated successfully by Kill Process Tree policy!`, 'success');
+          }
+          if (config.policies.networkIsolation) {
+            addLog(`[🔒] Host isolated from network due to ransomware detection!`, 'critical');
+          }
         } else {
-          addLog(`[✓] Scan clean for ${scanProcessName} (Safety rating: ${100 - result.risk_percentage}%)`, 'success');
+          addLog(`[✓] Scan clean for ${config.executableName} (Safety rating: ${(100 - result.risk_percentage).toFixed(2)}%)`, 'success');
         }
         // Instantly refresh the historical alerts
         fetchAlerts();
@@ -266,19 +288,22 @@ export default function Dashboard() {
     } catch (err) {
       addLog(`[-] API unreachable. Simulating locally...`, 'warning');
       setTimeout(() => {
-        const fallbackConfidence = isMaliciousKeyword ? 0.9848 : 0.0215;
+        const fallbackConfidence = isMalicious ? 0.9848 : 0.0215;
         const mockResult: ScanResponse = {
           success: true,
-          malicious: isMaliciousKeyword,
+          malicious: isMalicious,
           confidence: fallbackConfidence,
           risk_percentage: parseFloat((fallbackConfidence * 100).toFixed(2)),
-          threat_level: isMaliciousKeyword ? "HIGH (Ransomware Detected)" : "LOW (Healthy Process)",
+          threat_level: isMalicious ? "HIGH (Ransomware Detected)" : "LOW (Healthy Process)",
           processed_length: 100
         };
         setScanResult(mockResult);
-        if (isMaliciousKeyword) {
-          addLog(`[🚨] Local Alert: Ransomware signature flagged for ${scanProcessName}`, 'critical');
+        if (isMalicious) {
+          addLog(`[🚨] Local Alert: Ransomware signature flagged for ${config.executableName}`, 'critical');
           setKillCount(prev => prev + 1);
+          if (config.policies.killProcessTree) {
+            addLog(`[❌] Process ${mockPid} terminated successfully by Local Watchdog!`, 'success');
+          }
         }
       }, 1000);
     } finally {
@@ -690,6 +715,195 @@ export default function Dashboard() {
           font-weight: 800;
         }
 
+        /* Advanced Threat Simulator Styles */
+        .ats-container {
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: 12px;
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+        }
+        .ats-tabs {
+          display: flex;
+          border-bottom: 1px solid var(--border-color);
+          margin-bottom: 20px;
+          gap: 12px;
+        }
+        .ats-tab-btn {
+          flex: 1;
+          background: none;
+          border: none;
+          padding-bottom: 12px;
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--color-gray);
+          cursor: pointer;
+          transition: all 0.2s ease;
+          text-align: center;
+        }
+        .ats-tab-btn.active-attack {
+          color: var(--color-emerald);
+          border-bottom: 2px solid var(--color-emerald);
+        }
+        .ats-tab-btn.active-policies {
+          color: var(--color-cyan);
+          border-bottom: 2px solid var(--color-cyan);
+        }
+        .ats-tab-btn:hover:not(.active-attack):not(.active-policies) {
+          color: var(--color-text);
+        }
+        .ats-subtitle {
+          color: var(--color-gray);
+          font-size: 9px;
+          margin-bottom: 15px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .ats-content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        .ats-form-group {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .ats-label {
+          font-size: 10px;
+          color: var(--color-gray);
+          text-transform: uppercase;
+          font-weight: 700;
+          letter-spacing: 1px;
+        }
+        .ats-input {
+          width: 100%;
+          background-color: var(--bg-primary);
+          border: 1px solid var(--border-color);
+          color: var(--color-text);
+          padding: 10px 14px;
+          border-radius: 6px;
+          font-family: 'Courier New', monospace;
+          box-sizing: border-box;
+          font-size: 13px;
+        }
+        .ats-input:focus {
+          border-color: var(--color-cyan);
+          outline: none;
+        }
+        .ats-speed-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          background-color: var(--bg-primary);
+          padding: 6px;
+          border-radius: 8px;
+          border: 1px solid var(--border-color);
+        }
+        .ats-speed-btn {
+          background: none;
+          border: 1px solid transparent;
+          color: var(--color-gray);
+          padding: 8px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: capitalize;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .ats-speed-btn:hover:not(.active) {
+          color: var(--color-text);
+        }
+        .ats-speed-btn.active {
+          background-color: rgba(0, 255, 102, 0.1);
+          border-color: var(--color-emerald);
+          color: var(--color-emerald);
+          box-shadow: 0 0 8px rgba(0, 255, 102, 0.2);
+        }
+        .ats-checkbox-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          background-color: var(--bg-primary);
+          padding: 12px;
+          border-radius: 8px;
+          border: 1px solid var(--border-color);
+        }
+        .ats-checkbox-label {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 11px;
+          color: var(--color-text);
+          cursor: pointer;
+        }
+        .ats-checkbox {
+          accent-color: var(--color-emerald);
+          width: 15px;
+          height: 15px;
+          cursor: pointer;
+        }
+        .ats-policy-card {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background-color: var(--bg-primary);
+          padding: 12px 16px;
+          border-radius: 8px;
+          border: 1px solid var(--border-color);
+        }
+        .ats-policy-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .ats-policy-title {
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--color-text);
+        }
+        .ats-policy-desc {
+          font-size: 9px;
+          color: var(--color-gray);
+        }
+        .ats-policy-checkbox {
+          accent-color: var(--color-cyan);
+          width: 15px;
+          height: 15px;
+          cursor: pointer;
+        }
+        .ats-note {
+          background-color: rgba(0, 210, 255, 0.05);
+          border: 1px solid rgba(0, 210, 255, 0.2);
+          border-radius: 8px;
+          padding: 12px;
+          font-size: 11px;
+          color: var(--color-cyan);
+          line-height: 1.5;
+        }
+        .ats-inject-btn {
+          width: 100%;
+          background-color: var(--color-emerald);
+          border: none;
+          color: #000;
+          padding: 14px;
+          border-radius: 8px;
+          font-weight: 800;
+          cursor: pointer;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          transition: all 0.2s ease;
+          font-size: 12px;
+          box-shadow: var(--glow-emerald);
+        }
+        .ats-inject-btn:hover {
+          background-color: var(--color-cyan);
+          box-shadow: var(--glow-cyan);
+        }
+
         /* KEYFRAMES */
         @keyframes blink {
           50% { opacity: 0; }
@@ -811,77 +1025,41 @@ export default function Dashboard() {
 
         {/* RIGHT COLUMN: Sidebar Controllers */}
         <section className="sidebar-panel">
-          {/* Quick Simulation Trigger */}
-          <div className="sidebar-card">
-            <div className="panel-heading">Manual Attack Simulator</div>
+          {/* Advanced Attack Simulator Component */}
+          <AdvancedThreatSimulator onInjectSequence={handleSimulateScan} />
 
-            <div className="form-group">
-              <label>Simulated Executable Name</label>
-              <input
-                type="text"
-                className="text-input"
-                value={scanProcessName}
-                onChange={(e) => setScanProcessName(e.target.value)}
-                placeholder="e.g. cryptolocker.exe"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Threat Behavior Selection</label>
-              <select
-                className="text-input"
-                style={{ backgroundColor: 'var(--bg-primary)' }}
-                onChange={(e) => setScanProcessName(e.target.value)}
-                value={scanProcessName}
-              >
-                <option value="cryptolocker_v4.exe">Ransomware: CryptoLocker Simulation</option>
-                <option value="wannacry_reproduced.exe">Ransomware: WannaCry Sequence Simulation</option>
-                <option value="chrome_installer.exe">Healthy: Google Chrome Download Simulation</option>
-                <option value="svchost_sys.exe">Healthy: System svchost Routine Execution</option>
-              </select>
-            </div>
-
-            <button
-              className="scan-trigger-btn"
-              disabled={isScanning}
-              onClick={handleSimulateScan}
-            >
-              {isScanning ? 'Executing Transformer Scan...' : 'Inject Sequence & Test AI'}
-            </button>
-
-            {/* Results Screen */}
-            {scanResult && (
-              <div className="result-container">
-                <div className="panel-heading" style={{ fontSize: '11px', border: 'none', margin: '0 0 10px 0', padding: 0 }}>
-                  Scanner API Evaluation
-                </div>
-
-                <div className="result-row">
-                  <span className="result-lbl">Process Name:</span>
-                  <span className="result-val">{scanProcessName}</span>
-                </div>
-
-                <div className="result-row">
-                  <span className="result-lbl">Verdict / Assessment:</span>
-                  <span className={`result-val ${scanResult.malicious ? 'threat-flag-red' : 'threat-flag-green'}`}>
-                    {scanResult.malicious ? '🔴 MALICIOUS' : '🟢 SAFE'}
-                  </span>
-                </div>
-
-                <div className="result-row">
-                  <span className="result-lbl">Transformer Confidence:</span>
-                  <span className="result-val">{scanResult.risk_percentage}%</span>
-                </div>
-
-                <div className="result-row">
-                  <span className="result-lbl">Threat Severity Level:</span>
-                  <span className="result-val" style={{ color: scanResult.malicious ? 'var(--color-ruby)' : 'var(--color-emerald)' }}>
-                    {scanResult.threat_level}
-                  </span>
-                </div>
+          {/* Results Screen */}
+          {scanResult && (
+            <div className="sidebar-card">
+              <div className="panel-heading" style={{ fontSize: '11px', border: 'none', margin: '0 0 10px 0', padding: 0 }}>
+                Scanner API Evaluation
               </div>
-            )}
-          </div>
+
+              <div className="result-row">
+                <span className="result-lbl">Process Name:</span>
+                <span className="result-val">{scanProcessName}</span>
+              </div>
+
+              <div className="result-row">
+                <span className="result-lbl">Verdict / Assessment:</span>
+                <span className={`result-val ${scanResult.malicious ? 'threat-flag-red' : 'threat-flag-green'}`}>
+                  {scanResult.malicious ? '🔴 MALICIOUS' : '🟢 SAFE'}
+                </span>
+              </div>
+
+              <div className="result-row">
+                <span className="result-lbl">Transformer Confidence:</span>
+                <span className="result-val">{scanResult.risk_percentage}%</span>
+              </div>
+
+              <div className="result-row">
+                <span className="result-lbl">Threat Severity Level:</span>
+                <span className="result-val" style={{ color: scanResult.malicious ? 'var(--color-ruby)' : 'var(--color-emerald)' }}>
+                  {scanResult.threat_level}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Quick Help Card */}
           <div className="sidebar-card">

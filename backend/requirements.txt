@@ -7,3 +7,4 @@ psutil
 supabase
 python-dotenv
 gunicorn
+plyer

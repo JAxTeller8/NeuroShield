@@ -140,6 +140,62 @@ export default function Dashboard() {
     }
   }, [logs]);
 
+  const lastAlertRef = useRef<{ pid: number; time: string } | null>(null);
+
+  // Real-time EDR Agent Polling Alert Effect
+  useEffect(() => {
+    const fetchLatestTelemetry = async () => {
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/latest-alert`);
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        if (data && data.process_name) {
+          const alertKey = `${data.pid}-${data.timestamp}`;
+          if (lastAlertRef.current && lastAlertRef.current.pid === data.pid && lastAlertRef.current.time === data.timestamp) {
+            return;
+          }
+          lastAlertRef.current = { pid: data.pid, time: data.timestamp };
+
+          // 1. Update scanning states to light up Cognitive Threat Mapper
+          setScanResult({
+            success: true,
+            malicious: data.malicious,
+            confidence: data.confidence,
+            risk_percentage: data.confidence,
+            threat_level: data.malicious ? "HIGH (Ransomware Detected)" : "LOW (Healthy Process)",
+            processed_length: 100
+          });
+          setScanProcessName(data.process_name);
+
+          // 2. Append critical log banner dynamically
+          const timestamp = new Date().toTimeString().split(' ')[0];
+          const newLogText = data.malicious 
+            ? `🚨 CRITICAL THREAT: ${data.process_name} (PID: ${data.pid}) evaluated as MALICIOUS!`
+            : `🟢 CLEAN PROCESS: ${data.process_name} (PID: ${data.pid}) evaluated as SAFE.`;
+
+          setLogs((prevLogs) => {
+            if (prevLogs.some(l => l.text === newLogText)) return prevLogs;
+            
+            const newLogMsg: LogMessage = {
+              id: `latest-alert-${data.pid}-${Date.now()}`,
+              time: timestamp,
+              type: data.malicious ? 'critical' : 'success',
+              text: newLogText
+            };
+            return [...prevLogs.slice(-49), newLogMsg];
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching telemetry polling:", error);
+      }
+    };
+
+    const interval = setInterval(fetchLatestTelemetry, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   // ----------------------------------------------------
   // Map Database Alerts to Terminal Logs and Stats Cards
   // ----------------------------------------------------
@@ -904,6 +960,420 @@ export default function Dashboard() {
           box-shadow: var(--glow-cyan);
         }
 
+        /* Visual Threat Mapper Styles */
+        .vtm-container {
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: 12px;
+          padding: 24px;
+          height: 520px;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          animation: fadeIn 0.4s ease;
+        }
+        .vtm-header {
+          border-bottom: 1px solid var(--border-color);
+          padding-bottom: 12px;
+        }
+        .vtm-title {
+          margin: 0;
+          font-size: 13px;
+          font-weight: 800;
+          color: var(--color-cyan);
+          letter-spacing: 1px;
+          text-transform: uppercase;
+        }
+        .vtm-desc {
+          margin: 4px 0 0 0;
+          font-size: 10px;
+          color: var(--color-gray);
+        }
+        .vtm-graph {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          position: relative;
+          margin: auto 0;
+        }
+        .vtm-node {
+          background-color: var(--bg-primary);
+          border: 1px solid var(--border-color);
+          padding: 16px;
+          border-radius: 10px;
+          text-align: center;
+          position: relative;
+          z-index: 10;
+          transition: border-color 0.3s ease;
+        }
+        .vtm-node:hover {
+          border-color: #2b3547;
+        }
+        .vtm-node-emoji {
+          font-size: 20px;
+          margin-bottom: 6px;
+        }
+        .vtm-node-title {
+          margin: 0;
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--color-text);
+        }
+        .vtm-badge {
+          display: inline-block;
+          font-size: 9px;
+          margin-top: 10px;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+        .vtm-badge.observed {
+          color: var(--color-emerald);
+          background-color: rgba(0, 255, 102, 0.1);
+          border: 1px solid rgba(0, 255, 102, 0.2);
+        }
+        .vtm-badge.warning {
+          color: #f1c40f;
+          background-color: rgba(241, 196, 15, 0.1);
+          border: 1px solid rgba(241, 196, 15, 0.2);
+          animation: blink 2s infinite;
+        }
+        .vtm-badge.critical {
+          color: var(--color-ruby);
+          background-color: rgba(255, 51, 85, 0.1);
+          border: 1px solid rgba(255, 51, 85, 0.2);
+        }
+        .vtm-badge.mitigation {
+          color: var(--color-cyan);
+          background-color: rgba(0, 210, 255, 0.1);
+          border: 1px solid rgba(0, 210, 255, 0.2);
+        }
+        .vtm-badge.idle {
+          color: var(--color-gray);
+          background-color: var(--bg-tertiary);
+          border: 1px solid transparent;
+        }
+        .vtm-connector-line {
+          position: absolute;
+          top: 50%;
+          left: 0;
+          right: 0;
+          height: 2px;
+          background-color: var(--border-color);
+          transform: translateY(-50%);
+          z-index: 1;
+        }
+        .vtm-verdict-card {
+          padding: 16px;
+          border-radius: 10px;
+          border: 1px solid var(--border-color);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background-color: var(--bg-primary);
+        }
+        .vtm-verdict-card.malicious {
+          background-color: rgba(255, 51, 85, 0.05);
+          border-color: rgba(255, 51, 85, 0.2);
+        }
+        .vtm-verdict-info {
+          font-size: 11px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .vtm-verdict-score {
+          text-align: right;
+        }
+        .vtm-verdict-score-lbl {
+          font-size: 9px;
+          color: var(--color-gray);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .vtm-verdict-score-val {
+          font-size: 18px;
+          font-weight: 800;
+          font-family: 'Courier New', monospace;
+        }
+        .vtm-verdict-score-val.malicious {
+          color: var(--color-ruby);
+          text-shadow: var(--glow-ruby);
+        }
+        .vtm-verdict-score-val.safe {
+          color: var(--color-emerald);
+          text-shadow: var(--glow-emerald);
+        }
+
+        /* Dynamic Simulator & Tailwind Mapping */
+        .terminal-container {
+          background-color: #070d16;
+          border: 1px solid #1f2937;
+          border-radius: 1rem;
+          padding: 1.25rem;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          height: 500px;
+          overflow-y: auto;
+        }
+        .terminal-container .flex {
+          display: flex;
+        }
+        .terminal-container .items-center {
+          align-items: center;
+        }
+        .terminal-container .justify-between {
+          justify-content: space-between;
+        }
+        .terminal-container .mb-4 {
+          margin-bottom: 1rem;
+        }
+        .terminal-container .border-b {
+          border-bottom: 1px solid;
+        }
+        .terminal-container .border-gray-800 {
+          border-color: #1f2937;
+        }
+        .terminal-container .pb-3 {
+          padding-bottom: 0.75rem;
+        }
+        .terminal-container .text-\[\#10b981\] {
+          color: #10b981;
+        }
+        .terminal-container .text-xs {
+          font-size: 0.75rem;
+        }
+        .terminal-container .gap-2 {
+          gap: 0.5rem;
+        }
+        .terminal-container .w-2 {
+          width: 0.5rem;
+        }
+        .terminal-container .h-2 {
+          height: 0.5rem;
+        }
+        .terminal-container .rounded-full {
+          border-radius: 9999px;
+        }
+        .terminal-container .bg-\[\#10b981\] {
+          background-color: #10b981;
+        }
+        .terminal-container .space-y-2 > * + * {
+          margin-top: 0.5rem;
+        }
+        .terminal-container .text-gray-400 {
+          color: #9ca3af;
+        }
+
+        .visual-simulator-container {
+          background-color: #070d16;
+          border: 1px solid #1f2937;
+          border-radius: 1rem;
+          padding: 1.5rem;
+          height: 500px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          animation: fadeIn 0.4s ease;
+          color: white;
+          box-sizing: border-box;
+        }
+        .visual-simulator-container .border-b {
+          border-bottom: 1px solid;
+        }
+        .visual-simulator-container .border-gray-800 {
+          border-color: #1f2937;
+        }
+        .visual-simulator-container .pb-4 {
+          padding-bottom: 1rem;
+        }
+        .visual-simulator-container .text-sm {
+          font-size: 0.875rem;
+        }
+        .visual-simulator-container .font-bold {
+          font-weight: bold;
+        }
+        .visual-simulator-container .text-\[\#0ea5e9\] {
+          color: #0ea5e9;
+        }
+        .visual-simulator-container .tracking-wide {
+          letter-spacing: 0.025em;
+        }
+        .visual-simulator-container .uppercase {
+          text-transform: uppercase;
+        }
+        .visual-simulator-container .text-xs {
+          font-size: 0.75rem;
+        }
+        .visual-simulator-container .text-gray-500 {
+          color: #6b7280;
+        }
+        .visual-simulator-container .mt-1 {
+          margin-top: 0.25rem;
+        }
+        .visual-simulator-container .grid {
+          display: grid;
+        }
+        .visual-simulator-container .grid-cols-4 {
+          grid-template-columns: repeat(4, 1fr);
+        }
+        .visual-simulator-container .gap-4 {
+          gap: 1rem;
+        }
+        .visual-simulator-container .my-auto {
+          margin-top: auto;
+          margin-bottom: auto;
+        }
+        .visual-simulator-container .relative {
+          position: relative;
+        }
+        .visual-simulator-container .absolute {
+          position: absolute;
+        }
+        .visual-simulator-container .top-1/2 {
+          top: 50%;
+        }
+        .visual-simulator-container .left-0 {
+          left: 0;
+        }
+        .visual-simulator-container .right-0 {
+          right: 0;
+        }
+        .visual-simulator-container .h-0.5 {
+          height: 2px;
+        }
+        .visual-simulator-container .-translate-y-1/2 {
+          transform: translateY(-50%);
+        }
+        .visual-simulator-container .z-0 {
+          z-index: 0;
+        }
+        .visual-simulator-container .z-10 {
+          z-index: 10;
+        }
+        .visual-simulator-container .bg-\[\#0c1420\] {
+          background-color: #0c1420;
+        }
+        .visual-simulator-container .p-4 {
+          padding: 1rem;
+        }
+        .visual-simulator-container .rounded-xl {
+          border-radius: 0.75rem;
+        }
+        .visual-simulator-container .text-center {
+          text-align: center;
+        }
+        .visual-simulator-container .text-xl {
+          font-size: 1.25rem;
+        }
+        .visual-simulator-container .mb-1 {
+          margin-bottom: 0.25rem;
+        }
+        .visual-simulator-container .text-gray-300 {
+          color: #d1d5db;
+        }
+        .visual-simulator-container .text-\[10px\] {
+          font-size: 10px;
+        }
+        .visual-simulator-container .text-\[\#10b981\] {
+          color: #10b981;
+        }
+        .visual-simulator-container .mt-1\.5 {
+          margin-top: 0.375rem;
+        }
+        .visual-simulator-container .bg-\[\#10b981\]\/10 {
+          background-color: rgba(16, 185, 129, 0.1);
+        }
+        .visual-simulator-container .py-0\.5 {
+          padding-top: 0.125rem;
+          padding-bottom: 0.125rem;
+        }
+        .visual-simulator-container .rounded {
+          border-radius: 0.25rem;
+        }
+        .visual-simulator-container .border-\[\#10b981\]\/20 {
+          border-color: rgba(16, 185, 129, 0.2);
+        }
+        .visual-simulator-container .border-gray-800 {
+          border-color: #1f2937;
+        }
+        .visual-simulator-container .text-orange-400 {
+          color: #fb923c;
+        }
+        .visual-simulator-container .bg-orange-400\/10 {
+          background-color: rgba(251, 146, 60, 0.1);
+        }
+        .visual-simulator-container .border-orange-400\/20 {
+          border-color: rgba(251, 146, 60, 0.2);
+        }
+        .visual-simulator-container .bg-gray-900 {
+          background-color: #111827;
+        }
+        .visual-simulator-container .border-transparent {
+          border-color: transparent;
+        }
+        .visual-simulator-container .text-red-400 {
+          color: #f87171;
+        }
+        .visual-simulator-container .bg-red-400\/10 {
+          background-color: rgba(248, 113, 113, 0.1);
+        }
+        .visual-simulator-container .border-red-400\/30 {
+          border-color: rgba(248, 113, 113, 0.3);
+        }
+        .visual-simulator-container .bg-\[\#0ea5e9\]\/10 {
+          background-color: rgba(14, 165, 233, 0.1);
+        }
+        .visual-simulator-container .border-\[\#0ea5e9\]\/30 {
+          border-color: rgba(14, 165, 233, 0.3);
+        }
+        .visual-simulator-container .border {
+          border: 1px solid;
+        }
+        .visual-simulator-container .bg-red-950\/20 {
+          background-color: rgba(69, 10, 10, 0.2);
+        }
+        .visual-simulator-container .border-red-900\/50 {
+          border-color: rgba(127, 29, 29, 0.5);
+        }
+        .visual-simulator-container .text-red-200 {
+          color: #fecaca;
+        }
+        .visual-simulator-container .bg-slate-900\/50 {
+          background-color: rgba(15, 23, 42, 0.5);
+        }
+        .visual-simulator-container .flex {
+          display: flex;
+        }
+        .visual-simulator-container .items-center {
+          align-items: center;
+        }
+        .visual-simulator-container .justify-between {
+          justify-content: space-between;
+        }
+        .visual-simulator-container .space-y-1 > * + * {
+          margin-top: 0.25rem;
+        }
+        .visual-simulator-container .text-right {
+          text-align: right;
+        }
+        .visual-simulator-container .tracking-wider {
+          letter-spacing: 0.05em;
+        }
+        .visual-simulator-container .text-lg {
+          font-size: 1.125rem;
+        }
+        .visual-simulator-container .font-mono {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+        .visual-simulator-container .text-red-500 {
+          color: #ef4444;
+        }
+        .visual-simulator-container .text-\[\#10b981\] {
+          color: #10b981;
+        }
+
         /* KEYFRAMES */
         @keyframes blink {
           50% { opacity: 0; }
@@ -985,43 +1455,113 @@ export default function Dashboard() {
 
       {/* MAIN SOC WORKSPACE */}
       <main className="main-workspace">
-        {/* LEFT COLUMN: Terminal Logs Monitor */}
-        <section className="terminal-panel">
-          <div className="terminal-header">
-            <div className="terminal-title">
-              <span className="status-dot online"></span>
-              LIVE PROCESS TELEMETRY MONITORS (AUTO-SCROLL ON)
-            </div>
-            <div className="terminal-actions">
-              <button
-                className="terminal-btn"
-                onClick={() => window.open(`${BACKEND_URL}/api/reports/pdf`, '_blank')}
-                style={{ color: 'var(--color-cyan)', fontWeight: 'bold', borderColor: 'var(--color-cyan)' }}
-              >
-                📥 Export PDF Report
-              </button>
-              <button className="terminal-btn" onClick={handleClearDatabase}>Clear Terminal</button>
-              <button
-                className="terminal-btn"
-                onClick={() => setActiveFeed(!activeFeed)}
-                style={{ color: activeFeed ? '#ff3355' : '#00d2ff' }}
-              >
-                {activeFeed ? 'Freeze Stream' : 'Resume Stream'}
-              </button>
-            </div>
-          </div>
-
-          <div className="terminal-body">
-            {logs.map((log) => (
-              <div key={log.id} className="log-row">
-                <span className="log-time">[{log.time}]</span>
-                <span className={`log-text type-${log.type}`}>{log.text}</span>
+        {/* LEFT COLUMN: Conditional Central Display Panel */}
+        {activeTab === 'monitoring' ? (
+          /* 1️⃣ الخيار الأول: شاشة الـ Terminal النصية الحالية */
+          <div className="terminal-container bg-[#070d16] border border-gray-800 rounded-2xl p-5 font-mono h-[500px] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 border-b border-gray-800 pb-3">
+              <span className="text-[#10b981] text-xs flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse"></span>
+                LIVE PROCESS TELEMETRY MONITORS (AUTO-SCROLL ON)
+              </span>
+              {/* terminal actions */}
+              <div className="flex gap-2">
+                <button
+                  className="terminal-btn"
+                  onClick={() => window.open(`${BACKEND_URL}/api/reports/pdf`, '_blank')}
+                  style={{ color: 'var(--color-cyan)', fontWeight: 'bold', borderColor: 'var(--color-cyan)', background: 'transparent' }}
+                >
+                  📥 Export PDF Report
+                </button>
+                <button className="terminal-btn" style={{ background: 'transparent' }} onClick={handleClearDatabase}>Clear Terminal</button>
+                <button
+                  className="terminal-btn"
+                  onClick={() => setActiveFeed(!activeFeed)}
+                  style={{ color: activeFeed ? '#ff3355' : '#00d2ff', background: 'transparent', borderColor: activeFeed ? '#ff3355' : '#00d2ff' }}
+                >
+                  {activeFeed ? 'Freeze Stream' : 'Resume Stream'}
+                </button>
               </div>
-            ))}
-            <div className="terminal-cursor"></div>
-            <div ref={terminalEndRef} />
+            </div>
+            
+            <div className="space-y-2 text-xs">
+              {logs.map((log) => (
+                <div key={log.id} className="log-row">
+                  <span className="log-time">[{log.time}]</span>
+                  <span className={`log-text type-${log.type}`}>{log.text}</span>
+                </div>
+              ))}
+              <div className="terminal-cursor"></div>
+              <div ref={terminalEndRef} />
+            </div>
           </div>
-        </section>
+        ) : (
+          /* 2️⃣ الخيار الثاني الجديد: شاشة المحاكاة المرئية الفخمة (Interactive Threat Map) */
+          <div className="visual-simulator-container bg-[#070d16] border border-gray-800 rounded-2xl p-6 h-[500px] flex flex-col justify-between animate-fadeIn text-white">
+            
+            {/* الرأس - الهوية */}
+            <div className="border-b border-gray-800 pb-4">
+              <h3 className="text-sm font-bold text-[#0ea5e9] tracking-wide uppercase">⚡ AI-NeuroShield Cognitive Threat Mapper</h3>
+              <p className="text-xs text-gray-500 mt-1">Visualizing Transformer Self-Attention weights during runtime sequence telemetry.</p>
+            </div>
+
+            {/* الخريطة المرئية المتسلسلة - Attack Chain Node Graph */}
+            <div className="grid grid-cols-4 gap-4 my-auto relative">
+              
+              {/* المرحلة 1 */}
+              <div className="bg-[#0c1420] border border-gray-800 p-4 rounded-xl text-center relative z-10">
+                <div className="text-xl mb-1">🔍</div>
+                <h4 className="text-xs font-bold text-gray-300">1. Recon & Access</h4>
+                <div className="text-[10px] text-[#10b981] mt-1.5 bg-[#10b981]/10 py-0.5 rounded border border-[#10b981]/20">API Observed</div>
+              </div>
+
+              {/* المرحلة 2 */}
+              <div className="bg-[#0c1420] border border-gray-800 p-4 rounded-xl text-center relative z-10">
+                <div className="text-xl mb-1">🚷</div>
+                <h4 className="text-xs font-bold text-gray-300">2. Evasion Tactic</h4>
+                <div className={`text-[10px] mt-1.5 py-0.5 rounded border ${scanResult?.malicious ? 'text-orange-400 bg-orange-400/10 border-orange-400/20 animate-pulse' : 'text-gray-500 bg-gray-900 border-transparent'}`}>
+                  {scanResult?.malicious ? 'Suspicious Call' : 'Idle State'}
+                </div>
+              </div>
+
+              {/* المرحلة 3 */}
+              <div className="bg-[#0c1420] border border-gray-800 p-4 rounded-xl text-center relative z-10">
+                <div className="text-xl mb-1">🧠</div>
+                <h4 className="text-xs font-bold text-gray-300">3. Transformer AI</h4>
+                <div className={`text-[10px] mt-1.5 py-0.5 rounded border ${scanResult?.malicious ? 'text-red-400 bg-red-400/10 border-red-400/30' : 'text-gray-500 bg-gray-900 border-transparent'}`}>
+                  {scanResult?.malicious ? 'Attention Triggered' : 'Scrutinizing'}
+                </div>
+              </div>
+
+              {/* المرحلة 4 */}
+              <div className="bg-[#0c1420] border border-gray-800 p-4 rounded-xl text-center relative z-10">
+                <div className="text-xl mb-1">🛡️</div>
+                <h4 className="text-xs font-bold text-gray-300">4. Active Mitigation</h4>
+                <div className={`text-[10px] mt-1.5 py-0.5 rounded border ${scanResult?.malicious ? 'text-[#0ea5e9] bg-[#0ea5e9]/10 border-[#0ea5e9]/30' : 'text-gray-500 bg-gray-900 border-transparent'}`}>
+                  {scanResult?.malicious ? 'Enforcing Policy' : 'Safe Baseline'}
+                </div>
+              </div>
+
+              {/* خط الخلفية الواصل بين المراحل */}
+              <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-gray-800 -translate-y-1/2 z-0"></div>
+            </div>
+
+            {/* كرت الاستنتاج اللحظي السفلي */}
+            <div className={`p-4 rounded-xl border ${scanResult?.malicious ? 'bg-red-950/20 border-red-900/50 text-red-200' : 'bg-slate-900/50 border-gray-800 text-gray-300'} flex items-center justify-between`}>
+              <div className="text-xs space-y-1">
+                <div><strong>Current Evaluation Node:</strong> {scanProcessName || 'None'}</div>
+                <div><strong>Behavioral Sequence Verdict:</strong> {scanResult?.malicious ? '🚨 Malicious Signature Match' : '🟢 Verified Safe Execution Baseline'}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] uppercase text-gray-500 tracking-wider">AI Confidence Score</div>
+                <div className={`text-lg font-mono font-bold ${scanResult?.malicious ? 'text-red-500' : 'text-[#10b981]'}`}>
+                  {scanResult ? `${scanResult.risk_percentage}%` : '0.00%'}
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
 
         {/* RIGHT COLUMN: Sidebar Controllers */}
         <section className="sidebar-panel">

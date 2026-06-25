@@ -145,6 +145,8 @@ def get_status():
         "error": None if db_status == "stable" else f"Supabase connection issue: {db_status}"
     }), 200
 
+latest_system_alert = {}
+
 @app.route('/api/analyze', methods=['POST'])
 def analyze_sequence():
     """
@@ -216,7 +218,25 @@ def analyze_sequence():
         "processed_length": len(sequence) if isinstance(sequence, list) else 0
     }
 
+    # Update the global latest system alert variable
+    global latest_system_alert
+    latest_system_alert = {
+        "process_name": process_name,
+        "pid": pid,
+        "malicious": is_malicious,
+        "confidence": risk_factor,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
     return jsonify(result), 200
+
+@app.route('/api/latest-alert', methods=['GET'])
+def get_latest_alert():
+    """
+    نقطة استرجاع تفاصيل آخر تنبيه تم رصده من الـ Agent.
+    """
+    global latest_system_alert
+    return jsonify(latest_system_alert), 200
 
 # ----------------------------------------------------
 # نقاط استقبال إضافية لإدارة قاعدة البيانات ومركز العمليات الأمنية (SOC)

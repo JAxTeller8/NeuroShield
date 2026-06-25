@@ -11,12 +11,35 @@ import re
 import ctypes
 import socket
 
+# Try to import plyer for Windows notifications
+try:
+    from plyer import notification
+    PLYER_AVAILABLE = True
+except ImportError:
+    PLYER_AVAILABLE = False
+
+def trigger_windows_notification(process_name, severity="HIGH"):
+    """توليد إشعار ويندوز أصلي يظهر أسفل الشاشة"""
+    if PLYER_AVAILABLE:
+        try:
+            notification.notify(
+                title="🚨 NeuroShield EDR Alert",
+                message=f"Malicious behavior detected in '{process_name}'! Threat Level: {severity}. Actively Terminated.",
+                app_name="NeuroShield",
+                timeout=6
+            )
+        except Exception as e:
+            try:
+                logger.error(f"[-] Failed to trigger Windows notification: {e}")
+            except Exception:
+                print(f"[-] Failed to trigger Windows notification: {e}")
+
 # ----------------------------------------------------
 # Modular Agent Configuration
 # ----------------------------------------------------
 CONFIG = {
     # Flask backend API address. Can be a local address or a remote cloud IP/domain.
-    "BACKEND_URL": os.getenv("NEUROSHIELD_BACKEND_URL", "http://127.0.0.1:5000"),
+    "BACKEND_URL": os.getenv("NEUROSHIELD_BACKEND_URL", "https://neuroshield-sx07.onrender.com"),
     
     # Path to store agent logs
     "LOG_FILE_PATH": os.getenv("NEUROSHIELD_LOG_PATH", r"C:\ProgramData\NeuroShield\agent.log"),
@@ -405,6 +428,9 @@ def run_agent(service=None):
                                 logger.error(f"{RED}{BOLD}💥 Process Name : {name}{RESET}")
                                 logger.error(f"{RED}{BOLD}🆔 Process ID   : {pid}{RESET}")
                                 logger.error(f"{RED}{BOLD}🔥 Risk Factor  : {risk_pct:.2f}%{RESET}")
+                                
+                                # Trigger Windows native desktop notification
+                                trigger_windows_notification(name)
                                 
                                 if CONFIG["AUTO_TERMINATE"]:
                                     logger.error(f"{RED}{BOLD}💥 ACTION TAKEN : ENFORCING IMMEDIATE TERMINATION!{RESET}")
